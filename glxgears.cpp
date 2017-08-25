@@ -23,15 +23,10 @@
 
 Display *dpy;
 Window win;
-
-GstPipeline *pipeline;
-GstElement *testsink, *testgl;
-
 GLXContext ctx;
-GLuint blue_n;
-uint32_t last_frame = 0;
-GLuint textureId;
-GLuint tex3;
+
+GLuint normal_texture, gst_shared_texture;
+
 #ifndef GLX_MESA_swap_control
 #define GLX_MESA_swap_control 1
 typedef int (*PFNGLXGETSWAPINTERVALMESAPROC)(void);
@@ -240,7 +235,7 @@ static void draw_gears(void){
 	
 	glPushMatrix();
 	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE,GL_REPLACE);
-	glBindTexture (GL_TEXTURE_2D, textureId); 
+	glBindTexture (GL_TEXTURE_2D, gst_shared_texture); 
 	
 	int z_depth = -5;
 	glBegin( GL_QUADS );
@@ -253,7 +248,7 @@ static void draw_gears(void){
 	glTexCoord2f( 1.0f, 1.0f );
 	glVertex3f( 10.0f, -10.0f, z_depth );	//bottom right
 	
-	 glTexCoord2f( 1.0f, 0.0f );
+	glTexCoord2f( 1.0f, 0.0f );
 	glVertex3f( 10.0f, 10.0f, z_depth);	//top right
 	glEnd( );
 
@@ -614,7 +609,7 @@ gboolean drawCallback (GstElement* object, guint id , guint width ,guint height,
 	
 	//printf("Texture #:%d  X:%d  Y:%d!\n",id,width,height);
 	
-	textureId = id;
+	gst_shared_texture = id;
 	g_get_current_time (&current_time);
 	nbFrames++;
 
@@ -637,8 +632,55 @@ static gboolean worker_finish_in_idle (gpointer data) {
 	return true; //automatically keep calling this function when idle
 }
 
-static void event_loop(){
+int main(int argc, char *argv[]){
+
+	GstPipeline *pipeline;
+	GstElement *testsink;
+
+	gst_init (&argc, &argv);
+
+	unsigned int winWidth = 300, winHeight = 300;
+	int x = 0, y = 0;
+
+	char *dpyName = NULL;
+	GLboolean printInfo = GL_FALSE;
+	VisualID visId;
+	int max_size;
 	
+	dpy = XOpenDisplay(dpyName);
+	if (!dpy) {
+		printf("Error: couldn't open display %s\n",
+		dpyName ? dpyName : getenv("DISPLAY"));
+		return -1;
+	}
+
+	make_window(dpy, "glxgears", x, y, winWidth, winHeight, &win, &ctx, &visId);
+	XMapWindow(dpy, win);
+	glXMakeCurrent(dpy, win, ctx);
+	query_vsync(dpy, win);
+
+	//normal_texture = png_texture_load( "blue_0.png", NULL, NULL);
+	
+	//printf("Initial texture Number %d\n",normal_texture);
+	
+	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_size);
+	
+	if (printInfo) {
+		printf("GL_RENDERER   = %s\n", (char *) glGetString(GL_RENDERER));
+		printf("GL_VERSION    = %s\n", (char *) glGetString(GL_VERSION));
+		printf("GL_VENDOR     = %s\n", (char *) glGetString(GL_VENDOR));
+		printf("GL_EXTENSIONS = %s\n", (char *) glGetString(GL_EXTENSIONS));
+		printf("VisualID %d, 0x%x\n", (int) visId, (int) visId);
+	}
+
+	init();
+
+	/* Set initial projection/viewing transformation.
+	* We can't be sure we'll get a ConfigureNotify event when the window
+	* first appears.
+	*/
+	reshape(winWidth, winHeight);
+
 	pipeline = GST_PIPELINE (gst_parse_launch   ("videotestsrc ! video/x-raw,width=320,height=320,framerate=(fraction)20/1 ! glupload ! glfilterapp name=testsink ! fakesink sync=true", NULL));
 	//pipeline = GST_PIPELINE (gst_parse_launch   ("udpsrc port=9000 caps=application/x-rtp ! rtpjpegdepay ! queue ! jpegdec ! queue ! videoconvert ! revtv ! videoconvert !  glupload ! glfilterapp name=testsink ! fakesink sync=false", NULL));
 	//pipeline = GST_PIPELINE (gst_parse_launch   ("udpsrc port=9000 caps=application/x-rtp ! rtpjpegdepay ! queue ! jpegdec ! queue ! videoconvert ! glupload ! gleffects_heat ! glfilterapp name=testsink ! fakesink sync=false", NULL));
@@ -663,57 +705,6 @@ static void event_loop(){
 	gpointer data = NULL;
 	g_idle_add (worker_finish_in_idle, data);
 	g_main_loop_run (loop);
-	
-}
-
-
-int main(int argc, char *argv[]){
-
-	gst_init (&argc, &argv);
-
-	unsigned int winWidth = 300, winHeight = 300;
-	int x = 0, y = 0;
-
-	char *dpyName = NULL;
-	GLboolean printInfo = GL_FALSE;
-	VisualID visId;
-	int max_size;
-	
-	dpy = XOpenDisplay(dpyName);
-	if (!dpy) {
-		printf("Error: couldn't open display %s\n",
-		dpyName ? dpyName : getenv("DISPLAY"));
-		return -1;
-	}
-
-	make_window(dpy, "glxgears", x, y, winWidth, winHeight, &win, &ctx, &visId);
-	XMapWindow(dpy, win);
-	glXMakeCurrent(dpy, win, ctx);
-	query_vsync(dpy, win);
-
-	//blue_n = png_texture_load( "blue_0.png", NULL, NULL);
-	
-	//printf("Initial texture Number %d\n",blue_n);
-	
-	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_size);
-	
-	if (printInfo) {
-		printf("GL_RENDERER   = %s\n", (char *) glGetString(GL_RENDERER));
-		printf("GL_VERSION    = %s\n", (char *) glGetString(GL_VERSION));
-		printf("GL_VENDOR     = %s\n", (char *) glGetString(GL_VENDOR));
-		printf("GL_EXTENSIONS = %s\n", (char *) glGetString(GL_EXTENSIONS));
-		printf("VisualID %d, 0x%x\n", (int) visId, (int) visId);
-	}
-
-	init();
-
-	/* Set initial projection/viewing transformation.
-	* We can't be sure we'll get a ConfigureNotify event when the window
-	* first appears.
-	*/
-	reshape(winWidth, winHeight);
-
-	event_loop();
 	
 	glDeleteLists(gear1, 1);
 	glDeleteLists(gear2, 1);
