@@ -1,4 +1,4 @@
-#define GST_USE_UNSTABLE_API
+#define GST_USE_UNSTABLE_API  //if you're not out of control you're not in control
 
 #include <gst/gst.h>
 #include <gst/gl/gl.h>
