@@ -8,3 +8,5 @@ The key is to use a glfilterapp callback to get the texture and setting the bus 
 I put my rendering engine in the gstreamer idle loop and let it sync to my refresh rate (60hz), while the gstreamer video rate was less (20hz).
 
 I may clean it up at some point in the future, but given the lack of example code online I figured it was best to share this sooner rather than later.
+
+This was tested on the Raspberry Pi 3 running Raspbian Stretch Lite with minimal X installed.
