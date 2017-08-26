@@ -626,8 +626,10 @@ void start_pipeline(int input){
 	double start_switch = current_time();
 	
 	//kill old pipeline
-	gst_element_set_state (GST_ELEMENT (pipeline), GST_STATE_NULL);
-	gst_object_unref (pipeline);
+	if (GST_IS_ELEMENT(pipeline)){ //supress errors when no pipeline is running (first startup)
+		gst_element_set_state (GST_ELEMENT (pipeline), GST_STATE_NULL);
+		gst_object_unref (pipeline);
+	}
 	
 	//select a pipeline to fire up
 	if (input == 1){
@@ -728,7 +730,7 @@ int main(int argc, char *argv[]){
 	* first appears.
 	*/
 	reshape(winWidth, winHeight);
-
+	
 	loop = g_main_loop_new (NULL, FALSE);	
 	gpointer data = NULL;
 	
