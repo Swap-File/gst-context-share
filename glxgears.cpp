@@ -3,7 +3,6 @@
 #include <gst/gst.h>
 #include <gst/gl/gl.h>
 #include <gst/app/gstappsink.h>
-#include <gst/app/gstappsrc.h>
 #include <gst/gl/x11/gstgldisplay_x11.h>
 #include <gst/gl/gstglmemory.h>
 
@@ -24,9 +23,9 @@
 Display *dpy;
 Window win;
 GLXContext ctx;
-
+GstPipeline *pipeline;
 GLuint normal_texture, gst_shared_texture;
-
+GMainLoop *loop;
 #ifndef GLX_MESA_swap_control
 #define GLX_MESA_swap_control 1
 typedef int (*PFNGLXGETSWAPINTERVALMESAPROC)(void);
@@ -598,9 +597,7 @@ static void query_vsync(Display *dpy, GLXDrawable drawable)
 	}
 }
 
-
-
-//client draw callback
+//grabs the texture via the glfilterapp element
 gboolean drawCallback (GstElement* object, guint id , guint width ,guint height, gpointer user_data){
 
 	static GTimeVal current_time;
@@ -620,26 +617,76 @@ gboolean drawCallback (GstElement* object, guint id , guint width ,guint height,
 		last_sec = current_time.tv_sec;
 	}
 	
-	return true;
+	return true;  //not sure why?
 }
 
 
-double last_update;
+void start_pipeline(int input){
+	
+	double start_switch = current_time();
+	
+	//kill old pipeline
+	gst_element_set_state (GST_ELEMENT (pipeline), GST_STATE_NULL);
+	gst_object_unref (pipeline);
+	
+	//select a pipeline to fire up
+	if (input == 1){
+		pipeline = GST_PIPELINE (gst_parse_launch("videotestsrc ! video/x-raw,width=320,height=320,framerate=(fraction)20/1 ! glupload ! glfilterapp name=grabtexture ! fakesink sync=true", NULL));
+	}
+	if (input == 2){
+		pipeline = GST_PIPELINE (gst_parse_launch("udpsrc port=9000 caps=application/x-rtp ! rtpjpegdepay ! jpegdec ! queue ! videoconvert ! revtv ! queue ! videoconvert !  glupload ! glfilterapp name=grabtexture ! fakesink sync=false", NULL));
+	}
+	if (input == 3){
+		pipeline = GST_PIPELINE (gst_parse_launch("udpsrc port=9000 caps=application/x-rtp ! rtpjpegdepay ! queue ! jpegdec ! queue ! videoconvert ! glupload ! gleffects_heat ! glfilterapp name=grabtexture ! fakesink sync=false", NULL));
+	}
+	
+	gst_element_set_state (GST_ELEMENT (pipeline), GST_STATE_PAUSED); //technically we need to pause before setting callback?
+	
+	//set the glfilterapp callback that will capture the textures
+	GstElement *grabtexture = gst_bin_get_by_name (GST_BIN (pipeline), "grabtexture");
+	g_signal_connect (grabtexture, "client-draw",  G_CALLBACK (drawCallback), NULL);
+	gst_object_unref (grabtexture);
+
+	//set the bus watcher for error handling and to pass the x11 display and opengl context when the elements request it
+	GstBus *bus = gst_pipeline_get_bus (GST_PIPELINE (pipeline));
+	gst_bus_add_watch (bus, bus_call, loop);
+	gst_object_unref (bus);
+	
+	//start the show
+	gst_element_set_state (GST_ELEMENT (pipeline), GST_STATE_PLAYING);	
+	
+	printf("Pipeline %d swapped in %f\n",input,current_time() - start_switch);
+}
 
 
-static gboolean worker_finish_in_idle (gpointer data) {
+static gboolean idle_loop (gpointer data) {
+	
+	static uint8_t next_pipe = 1;
+	static double last_update_time;
+	
+	//opengl rendering update
 	draw_frame(dpy, win);
-	return true; //automatically keep calling this function when idle
+	
+	//automatically advance through pipelines for a demo
+	if (current_time() - last_update_time > 10){
+		start_pipeline(next_pipe);
+		next_pipe++;
+		if (next_pipe > 3 ) next_pipe = 1;
+		last_update_time = current_time();
+	}
+	
+	//return true to automaticall have this function called again when gstreamer is idle.
+	return true;
 }
 
 int main(int argc, char *argv[]){
 
-	GstPipeline *pipeline;
-	GstElement *testsink;
+
+
 
 	gst_init (&argc, &argv);
 
-	unsigned int winWidth = 300, winHeight = 300;
+	unsigned int winWidth = 640, winHeight = 480;
 	int x = 0, y = 0;
 
 	char *dpyName = NULL;
@@ -673,6 +720,7 @@ int main(int argc, char *argv[]){
 		printf("VisualID %d, 0x%x\n", (int) visId, (int) visId);
 	}
 
+	//opengl init
 	init();
 
 	/* Set initial projection/viewing transformation.
@@ -681,29 +729,11 @@ int main(int argc, char *argv[]){
 	*/
 	reshape(winWidth, winHeight);
 
-	pipeline = GST_PIPELINE (gst_parse_launch   ("videotestsrc ! video/x-raw,width=320,height=320,framerate=(fraction)20/1 ! glupload ! glfilterapp name=testsink ! fakesink sync=true", NULL));
-	//pipeline = GST_PIPELINE (gst_parse_launch   ("udpsrc port=9000 caps=application/x-rtp ! rtpjpegdepay ! queue ! jpegdec ! queue ! videoconvert ! revtv ! videoconvert !  glupload ! glfilterapp name=testsink ! fakesink sync=false", NULL));
-	//pipeline = GST_PIPELINE (gst_parse_launch   ("udpsrc port=9000 caps=application/x-rtp ! rtpjpegdepay ! queue ! jpegdec ! queue ! videoconvert ! glupload ! gleffects_heat ! glfilterapp name=testsink ! fakesink sync=false", NULL));
-	//gst-launch-1.0 -vvv rpicamsrc ! video/x-raw,width=640,height=480,framerate=30/1 ! queue max-size-time=50000000 leaky=upstream ! jpegenc ! rtpjpegpay ! udpsink host=192.168.1.169 port=9000 sync=false
-	
-	//gst_element_set_state (GST_ELEMENT (pipeline), GST_STATE_PAUSED);  //technically we need to pause before setting callback?
-	
-	testsink = gst_bin_get_by_name (GST_BIN (pipeline), "testsink");
-	g_signal_connect (testsink, "client-draw",  G_CALLBACK (drawCallback), NULL);  //IMPORTANT!
-	gst_object_unref (testsink);
-	
-	gst_element_set_state (GST_ELEMENT (pipeline), GST_STATE_PLAYING);
-	
-	GMainLoop *loop;
-	GstBus *bus;
-
-	loop = g_main_loop_new (NULL, FALSE);
-	bus = gst_pipeline_get_bus (GST_PIPELINE (pipeline));
-	gst_bus_add_watch (bus, bus_call, loop);
-	gst_object_unref (bus);
-	
+	loop = g_main_loop_new (NULL, FALSE);	
 	gpointer data = NULL;
-	g_idle_add (worker_finish_in_idle, data);
+	
+	//add the idle loop
+	g_idle_add (idle_loop, data);
 	g_main_loop_run (loop);
 	
 	glDeleteLists(gear1, 1);
