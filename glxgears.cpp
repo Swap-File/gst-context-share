@@ -23,8 +23,11 @@
 Display *dpy;
 Window win;
 GLXContext ctx;
-GstPipeline *pipeline;
-GLuint normal_texture, gst_shared_texture;
+
+GstPipeline *pipeline[75],*pipeline_active;
+
+GLuint normal_texture;
+volatile GLuint gst_shared_texture;
 GMainLoop *loop;
 #ifndef GLX_MESA_swap_control
 #define GLX_MESA_swap_control 1
@@ -70,7 +73,7 @@ void snapshot (guint input)  {
 
 		unsigned char *pixels = (unsigned char*)malloc(numBytes); 
 		glGetTexImage(GL_TEXTURE_2D, 0, internalFormat, GL_UNSIGNED_BYTE, pixels);
-		FILE *test = fopen("/home/pi/GL_RGBA8_EXT.raw", "wb");
+		FILE *test = fopen("GL_RGBA8_EXT.raw", "wb");
 		fwrite(pixels, 1, numBytes, test);
 		fclose(test);
 		free(pixels); 
@@ -103,7 +106,7 @@ static void gear(GLfloat inner_radius, GLfloat outer_radius, GLfloat width, GLin
 
 	da = 2.0 * M_PI / teeth / 4.0;
 
-	// glShadeModel(GL_FLAT);
+	glShadeModel(GL_FLAT);
 
 	glNormal3f(0.0, 0.0, 1.0);
 
@@ -384,6 +387,9 @@ static void init(void)
 	glEnable(GL_NORMALIZE);
 }
 
+GstContext *x11context;
+GstContext *ctxcontext;
+
 static gboolean bus_call (GstBus *bus, GstMessage *msg, gpointer data)
 {
 	GMainLoop *loop = (GMainLoop*)data;
@@ -394,7 +400,7 @@ static gboolean bus_call (GstBus *bus, GstMessage *msg, gpointer data)
 		g_print ("End-of-stream\n");
 		g_main_loop_quit (loop);
 		break;
-	case GST_MESSAGE_ERROR:
+	case GST_MESSAGE_ERROR: //normal debug callback
 		{
 			gchar *debug = NULL;
 			GError *err = NULL;
@@ -414,29 +420,26 @@ static gboolean bus_call (GstBus *bus, GstMessage *msg, gpointer data)
 			break;
 		}
 	case GST_MESSAGE_NEED_CONTEXT:  //THIS IS THE IMPORTANT PART
-		{			
+		{
 			const gchar *context_type;
-			GstContext *context = NULL;
 			gst_message_parse_context_type (msg, &context_type);
-			if (g_strcmp0 (context_type, "gst.gl.app_context") == 0) {
+			if (g_strcmp0 (context_type, "gst.gl.app_context") == 0) 
+			{
 				g_print("OpenGL Context Request Intercepted! %s\n", context_type);	
-				GstGLDisplay *sdl_gl_display = GST_GL_DISPLAY (gst_gl_display_x11_new_with_display (dpy));//dpy is the glx OpenGL display
-				GstGLContext *gl_context = gst_gl_context_new_wrapped ( sdl_gl_display, (guintptr) ctx,GST_GL_PLATFORM_GLX,GST_GL_API_OPENGL); //ctx is the glx OpenGL context
-				context = gst_context_new ("gst.gl.app_context", TRUE);
-				GstStructure *s = gst_context_writable_structure (context);
-				gst_structure_set (s, "context", GST_GL_TYPE_CONTEXT, gl_context, NULL);
-				gst_element_set_context (GST_ELEMENT (msg->src), context);
+				gst_element_set_context (GST_ELEMENT (msg->src), ctxcontext);  			
 			}
-			if (g_strcmp0 (context_type, GST_GL_DISPLAY_CONTEXT_TYPE) == 0) {
-				g_print("X11 Display Request Intercepted! %s\n", context_type);				
-				GstGLDisplay *gl_display = GST_GL_DISPLAY (gst_gl_display_x11_new_with_display (dpy));//dpy is the glx OpenGL display			
-				context = gst_context_new (GST_GL_DISPLAY_CONTEXT_TYPE, TRUE);
-				gst_context_set_gl_display (context, gl_display);
-				gst_element_set_context (GST_ELEMENT (msg->src), context);
+			if (g_strcmp0 (context_type, GST_GL_DISPLAY_CONTEXT_TYPE) == 0) 
+			{
+				g_print("X11 Display Request Intercepted! %s\n", context_type);			
+				gst_element_set_context (GST_ELEMENT (msg->src), x11context);			
 			}
-			if (context)
-			gst_context_unref (context);
+
 			break;
+		}
+		case GST_MESSAGE_HAVE_CONTEXT:
+		{
+			g_print("This should never happen! Don't let the elements set their own context!\n");
+			
 		}
 	default:
 		break;
@@ -605,7 +608,8 @@ gboolean drawCallback (GstElement* object, guint id , guint width ,guint height,
 	static gint nbFrames = 0;
 	
 	//printf("Texture #:%d  X:%d  Y:%d!\n",id,width,height);
-	
+	//snapshot(normal_texture);
+		
 	gst_shared_texture = id;
 	g_get_current_time (&current_time);
 	nbFrames++;
@@ -623,78 +627,74 @@ gboolean drawCallback (GstElement* object, guint id , guint width ,guint height,
 
 void start_pipeline(int input){
 	
-	double start_switch = current_time();
+	double start_time = current_time();
 	
-	//kill old pipeline
-	if (GST_IS_ELEMENT(pipeline)){ //supress errors when no pipeline is running (first startup)
-		gst_element_set_state (GST_ELEMENT (pipeline), GST_STATE_NULL);
-		gst_object_unref (pipeline);
+	//stop the old pipeline
+	if (GST_IS_ELEMENT(pipeline_active)){ //supress errors when no pipeline is running (first startup)
+		gst_element_set_state (GST_ELEMENT (pipeline_active), GST_STATE_NULL);
 	}
 	
-	//select a pipeline to fire up
-	if (input == 1){
-		pipeline = GST_PIPELINE (gst_parse_launch("videotestsrc ! video/x-raw,width=320,height=320,framerate=(fraction)20/1 ! glupload ! glfilterapp name=grabtexture ! fakesink sync=true", NULL));
-	}
-	if (input == 2){
-		pipeline = GST_PIPELINE (gst_parse_launch("udpsrc port=9000 caps=application/x-rtp ! rtpjpegdepay ! jpegdec ! queue ! videoconvert ! revtv ! queue ! videoconvert !  glupload ! glfilterapp name=grabtexture ! fakesink sync=false", NULL));
-	}
-	if (input == 3){
-		pipeline = GST_PIPELINE (gst_parse_launch("udpsrc port=9000 caps=application/x-rtp ! rtpjpegdepay ! queue ! jpegdec ! queue ! videoconvert ! glupload ! gleffects_heat ! glfilterapp name=grabtexture ! fakesink sync=false", NULL));
-	}
+	pipeline_active = pipeline[input];
 	
-	gst_element_set_state (GST_ELEMENT (pipeline), GST_STATE_PAUSED); //technically we need to pause before setting callback?
-	
-	//set the glfilterapp callback that will capture the textures
-	GstElement *grabtexture = gst_bin_get_by_name (GST_BIN (pipeline), "grabtexture");
-	g_signal_connect (grabtexture, "client-draw",  G_CALLBACK (drawCallback), NULL);
-	gst_object_unref (grabtexture);
-
-	//set the bus watcher for error handling and to pass the x11 display and opengl context when the elements request it
-	GstBus *bus = gst_pipeline_get_bus (GST_PIPELINE (pipeline));
-	gst_bus_add_watch (bus, bus_call, loop);
-	gst_object_unref (bus);
+	//if we dont se the callbacks here, the bus request handler can do it
+	//but explicitly setting it seems to be required when swapping pipelines
+	gst_element_set_context (GST_ELEMENT (pipeline_active), ctxcontext);  			
+	gst_element_set_context (GST_ELEMENT (pipeline_active), x11context);		
 	
 	//start the show
-	gst_element_set_state (GST_ELEMENT (pipeline), GST_STATE_PLAYING);	
+	gst_element_set_state (GST_ELEMENT (pipeline_active), GST_STATE_PLAYING);	
 	
-	printf("Pipeline %d swapped in %f\n",input,current_time() - start_switch);
+	printf("Pipeline %d changed to in %f seconds!\n",input,current_time() - start_time);
 }
 
 
 static gboolean idle_loop (gpointer data) {
 	
-	static uint8_t next_pipe = 1;
+	static uint8_t next_pipe = 0;
 	static double last_update_time;
 	
 	//opengl rendering update
 	draw_frame(dpy, win);
 	
 	//automatically advance through pipelines for a demo
-	if (current_time() - last_update_time > 10){
+	if (current_time() - last_update_time > 3){
 		start_pipeline(next_pipe);
 		next_pipe++;
-		if (next_pipe > 3 ) next_pipe = 1;
+		if (next_pipe > 2 ) next_pipe = 0;
 		last_update_time = current_time();
 	}
 	
-	//return true to automaticall have this function called again when gstreamer is idle.
+	//return true to automatically have this function called again when gstreamer is idle.
 	return true;
 }
 
+void load_pipeline(int i, char * text){
+	
+		pipeline[i] = GST_PIPELINE (gst_parse_launch(text, NULL));
+
+		//set the bus watcher for error handling and to pass the x11 display and opengl context when the elements request it
+		//must be BEFORE setting the client-draw callback
+		GstBus *bus = gst_pipeline_get_bus (GST_PIPELINE (pipeline[i]));
+		gst_bus_add_watch (bus, bus_call, loop);
+		gst_object_unref (bus);
+		
+		//set the glfilterapp callback that will capture the textures
+		//do this AFTER attaching the bus handler so context can be set
+		GstElement *grabtexture = gst_bin_get_by_name (GST_BIN (pipeline[i]), "grabtexture");
+		g_signal_connect (grabtexture, "client-draw",  G_CALLBACK (drawCallback), NULL);
+		gst_object_unref (grabtexture);	
+}
+
+
 int main(int argc, char *argv[]){
 
-
-
-
-	gst_init (&argc, &argv);
-
+	/* Initialize X11 */
 	unsigned int winWidth = 640, winHeight = 480;
 	int x = 0, y = 0;
 
 	char *dpyName = NULL;
 	GLboolean printInfo = GL_FALSE;
 	VisualID visId;
-	int max_size;
 	
 	dpy = XOpenDisplay(dpyName);
 	if (!dpy) {
@@ -708,12 +708,13 @@ int main(int argc, char *argv[]){
 	glXMakeCurrent(dpy, win, ctx);
 	query_vsync(dpy, win);
 
+	/* PNG Texture loader */
 	//normal_texture = png_texture_load( "blue_0.png", NULL, NULL);
-	
 	//printf("Initial texture Number %d\n",normal_texture);
 	
-	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_size);
-	
+	/* Inspect the texture */
+	//snapshot(normal_texture);
+		
 	if (printInfo) {
 		printf("GL_RENDERER   = %s\n", (char *) glGetString(GL_RENDERER));
 		printf("GL_VERSION    = %s\n", (char *) glGetString(GL_VERSION));
@@ -722,7 +723,7 @@ int main(int argc, char *argv[]){
 		printf("VisualID %d, 0x%x\n", (int) visId, (int) visId);
 	}
 
-	//opengl init
+	/* OpenGL Setup */
 	init();
 
 	/* Set initial projection/viewing transformation.
@@ -731,12 +732,40 @@ int main(int argc, char *argv[]){
 	*/
 	reshape(winWidth, winHeight);
 	
-	loop = g_main_loop_new (NULL, FALSE);	
-	gpointer data = NULL;
+	/* Initialize GStreamer */
+	const char *arg1_gst[]  = {"glxgears"}; 
+	const char *arg2_gst[]  = {"--gst-disable-registry-update"};  //dont rescan the registry to load faster.
+	const char *arg3_gst[]  = {"--gst-debug-level=1"};  //dont show debug messages
+	char ** argv_gst[3] = {(char **)arg1_gst,(char **)arg2_gst,(char **)arg3_gst};
+	int argc_gst = 3;
+	gst_init (&argc_gst, argv_gst );
 	
-	//add the idle loop
+	//get x11context ready for handing off to elements in the callback
+	GstGLDisplay * gl_display = GST_GL_DISPLAY (gst_gl_display_x11_new_with_display (dpy));//dpy is the glx OpenGL display			
+	x11context = gst_context_new (GST_GL_DISPLAY_CONTEXT_TYPE, TRUE);
+	gst_context_set_gl_display (x11context, gl_display);
+	
+	//get ctxcontext ready for handing off to elements in the callback
+	GstGLContext *gl_context = gst_gl_context_new_wrapped ( gl_display, (guintptr) ctx,GST_GL_PLATFORM_GLX,GST_GL_API_OPENGL); //ctx is the glx OpenGL context
+	ctxcontext = gst_context_new ("gst.gl.app_context", TRUE);
+	gst_structure_set (gst_context_writable_structure (ctxcontext), "context", GST_GL_TYPE_CONTEXT, gl_context, NULL);
+	
+	//preload all pipelines we will be switching between.  This allows faster switching than destroying and recrearting the pipelines
+	//Also, if too many pipelines get destroyed and recreated I have noticed gstreamer or x11 will eventually crash with context errors
+	//this can switch between pipelines in 5-20ms on a Pi3.
+	load_pipeline(0,(char *)"videotestsrc ! video/x-raw,width=640,height=480,framerate=(fraction)20/1 ! queue ! glupload ! video/x-raw(memory:GLMemory),width=640,height=480,format=RGBA ! glfilterapp name=grabtexture ! fakesink sync=true");
+	load_pipeline(1,(char *)"videotestsrc ! video/x-raw,width=640,height=480,framerate=(fraction)20/1 ! revtv ! glupload ! glcolorconvert ! video/x-raw(memory:GLMemory),width=640,height=480,format=RGBA ! glfilterapp name=grabtexture ! fakesink sync=false");
+	load_pipeline(2,(char *)"videotestsrc ! video/x-raw,width=640,height=480,framerate=(fraction)20/1 ! glupload ! glcolorconvert ! gleffects_heat ! video/x-raw(memory:GLMemory),width=640,height=480,format=RGBA ! glfilterapp name=grabtexture ! fakesink sync=false");
+	//load_pipeline(1,(char *)"udpsrc port=9000 caps=application/x-rtp retrieve-sender-address=false ! rtpjpegdepay ! jpegdec ! queue ! videoconvert ! revtv ! glupload ! glcolorconvert ! video/x-raw(memory:GLMemory),width=640,height=480,format=RGBA ! glfilterapp name=grabtexture ! fakesink sync=false");
+	//load_pipeline(2,(char *)"udpsrc port=9000 caps=application/x-rtp retrieve-sender-address=false ! rtpjpegdepay ! queue ! jpegdec ! glupload ! glcolorconvert ! gleffects_heat ! video/x-raw(memory:GLMemory),width=640,height=480,format=RGBA ! glfilterapp name=grabtexture ! fakesink sync=false");
+	//gst-launch-1.0 rpicamsrc preview=0 ! image/jpeg,width=640,height=480,framerate=30/1 ! queue max-size-time=50000000 leaky=upstream ! jpegparse ! rtpjpegpay  ! udpsink host=192.168.1.169 port=9000 sync=false
+
+	
+	//start the idle and main loops
+	loop = g_main_loop_new (NULL, FALSE);
+	gpointer data = NULL;
 	g_idle_add (idle_loop, data);
-	g_main_loop_run (loop);
+	g_main_loop_run (loop); //let gstreamer's GLib event loop take over
 	
 	glDeleteLists(gear1, 1);
 	glDeleteLists(gear2, 1);
