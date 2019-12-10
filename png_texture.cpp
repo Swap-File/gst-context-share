@@ -1,5 +1,5 @@
-#define GST_USE_UNSTABLE_API
-
+//#define GST_USE_UNSTABLE_API
+#include <GL/gl.h>
 #include <gst/gst.h>
 #include <gst/gl/gl.h>
 #include <stdlib.h>

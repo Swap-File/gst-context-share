@@ -1,4 +1,4 @@
-#define GST_USE_UNSTABLE_API  //if you're not out of control you're not in control
+//#define GST_USE_UNSTABLE_API  //if you're not out of control you're not in control
 
 #include <gst/gst.h>
 #include <gst/gl/gl.h>
@@ -735,7 +735,7 @@ int main(int argc, char *argv[]){
 	/* Initialize GStreamer */
 	const char *arg1_gst[]  = {"glxgears"}; 
 	const char *arg2_gst[]  = {"--gst-disable-registry-update"};  //dont rescan the registry to load faster.
-	const char *arg3_gst[]  = {"--gst-debug-level=1"};  //dont show debug messages
+	const char *arg3_gst[]  = {"--gst-debug-level=3"};  //dont show debug messages
 	char ** argv_gst[3] = {(char **)arg1_gst,(char **)arg2_gst,(char **)arg3_gst};
 	int argc_gst = 3;
 	gst_init (&argc_gst, argv_gst );
@@ -748,14 +748,14 @@ int main(int argc, char *argv[]){
 	//get ctxcontext ready for handing off to elements in the callback
 	GstGLContext *gl_context = gst_gl_context_new_wrapped ( gl_display, (guintptr) ctx,GST_GL_PLATFORM_GLX,GST_GL_API_OPENGL); //ctx is the glx OpenGL context
 	ctxcontext = gst_context_new ("gst.gl.app_context", TRUE);
-	gst_structure_set (gst_context_writable_structure (ctxcontext), "context", GST_GL_TYPE_CONTEXT, gl_context, NULL);
-	
+	gst_structure_set (gst_context_writable_structure (ctxcontext), "context", GST_TYPE_GL_CONTEXT, gl_context, NULL);
+
 	//preload all pipelines we will be switching between.  This allows faster switching than destroying and recrearting the pipelines
 	//Also, if too many pipelines get destroyed and recreated I have noticed gstreamer or x11 will eventually crash with context errors
 	//this can switch between pipelines in 5-20ms on a Pi3.
 	load_pipeline(0,(char *)"videotestsrc ! video/x-raw,width=640,height=480,framerate=(fraction)20/1 ! queue ! glupload ! video/x-raw(memory:GLMemory),width=640,height=480,format=RGBA ! glfilterapp name=grabtexture ! fakesink sync=true");
-	load_pipeline(1,(char *)"videotestsrc ! video/x-raw,width=640,height=480,framerate=(fraction)20/1 ! revtv ! glupload ! glcolorconvert ! video/x-raw(memory:GLMemory),width=640,height=480,format=RGBA ! glfilterapp name=grabtexture ! fakesink sync=false");
-	load_pipeline(2,(char *)"videotestsrc ! video/x-raw,width=640,height=480,framerate=(fraction)20/1 ! glupload ! glcolorconvert ! gleffects_heat ! video/x-raw(memory:GLMemory),width=640,height=480,format=RGBA ! glfilterapp name=grabtexture ! fakesink sync=false");
+	load_pipeline(1,(char *)"videotestsrc ! video/x-raw,width=640,height=480,framerate=(fraction)20/1 ! revtv ! glupload ! glcolorconvert ! video/x-raw(memory:GLMemory),width=640,height=480,format=RGBA ! glfilterapp name=grabtexture ! fakesink sync=true");
+	load_pipeline(2,(char *)"videotestsrc ! video/x-raw,width=640,height=480,framerate=(fraction)20/1 ! glupload ! glcolorconvert ! gleffects_heat ! video/x-raw(memory:GLMemory),width=640,height=480,format=RGBA ! glfilterapp name=grabtexture ! fakesink sync=true");
 	//load_pipeline(1,(char *)"udpsrc port=9000 caps=application/x-rtp retrieve-sender-address=false ! rtpjpegdepay ! jpegdec ! queue ! videoconvert ! revtv ! glupload ! glcolorconvert ! video/x-raw(memory:GLMemory),width=640,height=480,format=RGBA ! glfilterapp name=grabtexture ! fakesink sync=false");
 	//load_pipeline(2,(char *)"udpsrc port=9000 caps=application/x-rtp retrieve-sender-address=false ! rtpjpegdepay ! queue ! jpegdec ! glupload ! glcolorconvert ! gleffects_heat ! video/x-raw(memory:GLMemory),width=640,height=480,format=RGBA ! glfilterapp name=grabtexture ! fakesink sync=false");
 	//gst-launch-1.0 rpicamsrc preview=0 ! image/jpeg,width=640,height=480,framerate=30/1 ! queue max-size-time=50000000 leaky=upstream ! jpegparse ! rtpjpegpay  ! udpsink host=192.168.1.169 port=9000 sync=false
