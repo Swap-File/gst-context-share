@@ -1,5 +1,4 @@
 # gst-context-share
-initial
 
 This is a demonstation of how to share an OpenGL context and X11 display that originates in a GLX program (glxgears) with gstreamer for texture sharing.
 
