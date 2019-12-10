@@ -14,12 +14,15 @@ This was tested on the Raspberry Pi 3 running Raspbian Stretch Lite with minimal
 Recently updated for Pi4 w/ Raspbian Buster Lite 
 
 Minimal X:
+```
 sudo apt install --no-install-recommends xserver-xorg
 sudo apt install --no-install-recommends xinit
-
+```
 Test:
+```
 sudo apt install mesa-utils freeglut3 freeglut3-dev libxrender-dev
-
+```
 launch with 
-
+```
 sudo xinit /home/pi/gst-context-share-master/go.sh
+```
