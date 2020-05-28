@@ -25,3 +25,6 @@ launch with
 ```
 sudo xinit /home/pi/gst-context-share-master/go.sh
 ```
+
+Note:  This demo has not been recently upgraded, but you can see how to share a context between gstreamer and egl here 
+https://github.com/Swap-File/portal-gun-4/tree/master/portal/console
